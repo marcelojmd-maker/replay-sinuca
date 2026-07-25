@@ -229,9 +229,9 @@ def criar_pedido_pix(payload: CriarPedidoRequest):
         "description": f"Download de {quantidade} vídeo(s) de Replay - Sinuca",
         "payment_method_id": "pix",
         "payer": {
-            "email": "test_user_12345678@testuser.com",  # E-mail genérico para ambiente de testes
-            "first_name": "Test",
-            "last_name": "User"
+            "email": "cliente.replay.sinuca@gmail.com",
+            "first_name": "Cliente",
+            "last_name": "Sinuca"
         }
     }
 
@@ -275,3 +275,6 @@ async def webhook_mercadopago(request: Request):
 if __name__ == "__main__":
     print("🚀 Servidor Replay Sinuca a iniciar em http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+---
