@@ -22,7 +22,9 @@ R2_SECRET_ACCESS_KEY = "63f0f08d4f1f7b42ce9f1237d68b8d62b40ab69ab9fc5fc1837f553d
 R2_BUCKET_NAME = "replay-sinuca-videos"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-app = FastAPI(title="Sistema Replay Sinuca", version="1.0.0")
+APP_VERSION = "v1.0.1"
+
+app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
 sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -56,8 +58,9 @@ def pagina_principal():
             body { background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; padding-bottom: 100px; }
             .container { max-width: 600px; margin: 0 auto; }
             .header { text-align: center; padding: 20px 0; border-bottom: 1px solid #334155; }
-            .header h1 { margin: 0; color: #38bdf8; font-size: 24px; }
+            .header h1 { margin: 0; color: #38bdf8; font-size: 24px; display: flex; align-items: center; justify-content: center; gap: 8px; }
             .header p { color: #94a3b8; font-size: 14px; margin-top: 5px; }
+            .badge-version { background-color: #334155; color: #38bdf8; border: 1px solid #0284c7; font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: bold; }
             
             .video-card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 15px; margin: 15px 0; display: flex; align-items: center; justify-content: space-between; }
             .video-info { display: flex; align-items: center; gap: 12px; }
@@ -85,7 +88,7 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca</h1>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.1</span></h1>
                 <p>Mesa 01 - Selecione as suas jogadas e efetue o download</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
@@ -275,6 +278,3 @@ async def webhook_mercadopago(request: Request):
 if __name__ == "__main__":
     print("🚀 Servidor Replay Sinuca a iniciar em http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
----
