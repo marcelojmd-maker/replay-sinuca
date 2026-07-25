@@ -10,7 +10,8 @@ import boto3
 from botocore.config import Config
 
 # --- CONFIGURAÇÕES DE API E CREDENCIAIS ---
-MP_ACCESS_TOKEN = "APP_USR-6489362273871260-072301-0fc37fbb4c9b91cd61d09df4a342dad3-3563208830"
+# Access Token de Produção oficial ativado no Mercado Pago:
+MP_ACCESS_TOKEN = "APP_USR-1897163864153890-072301-0fb233e4976a8c3a845c136798f3bb06-1764155532"
 
 SUPABASE_URL = "https://ypfqoubipzrfnvtkphoe.supabase.co"
 SUPABASE_KEY = "sb_publishable_mOKdiwXupg6-RFLzbPJg1Q_Br32NkPD"
@@ -23,13 +24,9 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
 app = FastAPI(title="Sistema Replay Sinuca", version="1.0.0")
 
-# Inicialização do SDK do Mercado Pago
 sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
-
-# Inicialização do cliente Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Inicialização do cliente Cloudflare R2 (Compatível com S3)
 s3_client = boto3.client(
     "s3",
     endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
@@ -38,7 +35,6 @@ s3_client = boto3.client(
     config=Config(signature_version="s3v4"),
 )
 
-# --- MODELOS DE DADOS (PYDANTIC) ---
 class ReplayRequest(BaseModel):
     mesa_id: str
     evento: Optional[str] = "replay_request"
@@ -46,11 +42,8 @@ class ReplayRequest(BaseModel):
 class CriarPedidoRequest(BaseModel):
     video_ids: List[str]
 
-# --- ROTAS DA API ---
-
 @app.get("/", response_class=HTMLResponse)
 def pagina_principal():
-    """Página Web do utilizador para selecionar vídeos e efetuar o pagamento PIX."""
     html_content = """
     <!DOCTYPE html>
     <html lang="pt">
@@ -81,7 +74,6 @@ def pagina_principal():
             .btn-pix:hover { background-color: #16a34a; }
             .btn-simular { background-color: #3b82f6; color: white; border: none; padding: 10px 15px; border-radius: 6px; width: 100%; margin-top: 10px; cursor: pointer; font-weight: bold; }
 
-            /* Modal PIX */
             .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 100; }
             .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; max-width: 400px; width: 90%; text-align: center; }
             .modal-content img { max-width: 200px; margin: 15px 0; border-radius: 8px; }
@@ -99,7 +91,6 @@ def pagina_principal():
             </div>
 
             <div id="lista-videos">
-                <!-- Vídeos de Exemplo / Teste -->
                 <div class="video-card">
                     <div class="video-info">
                         <input type="checkbox" class="video-select" data-id="vid-demo-01" onchange="atualizarCarrinho()">
@@ -132,7 +123,6 @@ def pagina_principal():
             <button class="btn-pix" onclick="gerarPix()">Pagar via PIX</button>
         </div>
 
-        <!-- Modal Pagamento PIX -->
         <div id="modal-pix" class="modal">
             <div class="modal-content">
                 <h3 style="margin-top:0; color:#22c55e;">Pagamento PIX Gerado!</h3>
@@ -210,9 +200,7 @@ def pagina_principal():
 
 @app.post("/api/solicitar-replay")
 def solicitar_replay(payload: ReplayRequest):
-    """Endpoint acionado pelo ESP32 ao manter o botão pressionado por 2 segundos."""
     try:
-        # Registra a solicitação de vídeo no Supabase
         resposta = supabase.table("videos").insert({
             "mesa_id": payload.mesa_id,
             "url_video": f"https://{R2_BUCKET_NAME}.r2.cloudflarestorage.com/exemplo_video.mp4",
@@ -230,22 +218,20 @@ def solicitar_replay(payload: ReplayRequest):
 
 @app.post("/api/pedidos/criar-pix")
 def criar_pedido_pix(payload: CriarPedidoRequest):
-    """Endpoint para criar o pagamento PIX no Mercado Pago com base no carrinho."""
     quantidade = len(payload.video_ids)
     if quantidade == 0:
         raise HTTPException(status_code=400, detail="Nenhum vídeo selecionado")
 
-    valor_total = float(quantidade * 1.00)  # R$ 1,00 por vídeo
+    valor_total = float(quantidade * 1.00)
 
-    # Estrutura do pagamento para a API do Mercado Pago
     payment_data = {
         "transaction_amount": valor_total,
         "description": f"Download de {quantidade} vídeo(s) de Replay - Sinuca",
         "payment_method_id": "pix",
         "payer": {
-            "email": "cliente.sinuca@email.com",
-            "first_name": "Cliente",
-            "last_name": "Sinuca"
+            "email": "test_user_12345678@testuser.com",  # E-mail genérico para ambiente de testes
+            "first_name": "Test",
+            "last_name": "User"
         }
     }
 
@@ -263,7 +249,8 @@ def criar_pedido_pix(payload: CriarPedidoRequest):
                 "qr_code_base64": transaction_data.get("qr_code_base64")
             }
         else:
-            raise HTTPException(status_code=500, detail=f"Erro Mercado Pago: {payment.get('message')}")
+            msg_erro = payment.get("message", "Erro desconhecido")
+            raise HTTPException(status_code=500, detail=f"Erro Mercado Pago: {msg_erro}")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
@@ -271,7 +258,6 @@ def criar_pedido_pix(payload: CriarPedidoRequest):
 
 @app.post("/api/webhook/mercadopago")
 async def webhook_mercadopago(request: Request):
-    """Webhook do Mercado Pago para notificação automática de pagamentos aprovados."""
     try:
         data = await request.json()
         if data.get("action") == "payment.updated":
@@ -280,14 +266,12 @@ async def webhook_mercadopago(request: Request):
 
             if payment_info.get("status") == "approved":
                 print(f"✅ Pagamento {payment_id} aprovado com sucesso!")
-                # Aqui pode atualizar os vídeos no Supabase para status_pago = True
 
         return JSONResponse(content={"status": "ok"}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"erro": str(e)}, status_code=500)
 
 
-# --- EXECUÇÃO DO SERVIDOR ---
 if __name__ == "__main__":
     print("🚀 Servidor Replay Sinuca a iniciar em http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
