@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+mercadopago
+boto3
+supabase
+pydantic
+requests
