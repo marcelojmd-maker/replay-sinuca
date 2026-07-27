@@ -25,7 +25,7 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.0.7"
+APP_VERSION = "v1.0.8"
 
 app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
@@ -73,6 +73,7 @@ def pagina_principal():
             .video-details .time-badge { color: #38bdf8; font-weight: bold; font-size: 13px; }
             .video-details .status-txt { display: block; color: #64748b; font-size: 12px; margin-top: 3px; }
             .price-tag { background-color: #0284c7; color: white; padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 14px; }
+            .btn-download { background-color: #22c55e; color: #052e16; padding: 8px 16px; border-radius: 20px; font-weight: bold; text-decoration: none; font-size: 14px; }
             
             .checkout-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: #0f172a; border-top: 1px solid #334155; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; max-width: 600px; margin: 0 auto; }
             .checkout-info { font-size: 14px; color: #cbd5e1; }
@@ -93,7 +94,7 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.7</span></h1>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.8</span></h1>
                 <p>Mesa 01 - Selecione a jogada pela data e horário</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
@@ -123,20 +124,22 @@ def pagina_principal():
         </div>
 
         <script>
+            let intervalVerificacao = null;
+
             function formatarDataHora(item) {
                 const rawDate = item.data_hora || item.created_at || item.criado_em;
-                if (!rawDate) return "Recente";
+                if (!rawDate) return "ID #" + item.id;
                 
                 try {
                     const d = new Date(rawDate);
-                    if (isNaN(d.getTime())) return "Recente";
+                    if (isNaN(d.getTime())) return "ID #" + item.id;
                     
                     const dataStr = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
                     const horaStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                     
                     return `${dataStr} às ${horaStr}`;
                 } catch(e) {
-                    return "Recente";
+                    return "ID #" + item.id;
                 }
             }
 
@@ -151,9 +154,6 @@ def pagina_principal():
                         return;
                     }
 
-                    // Garante que o vídeo mais recente (maior ID) fique em primeiro lugar
-                    data.videos.sort((a, b) => (b.id || 0) - (a.id || 0));
-
                     container.innerHTML = '';
                     data.videos.forEach(v => {
                         const dataHoraStr = formatarDataHora(v);
@@ -162,13 +162,13 @@ def pagina_principal():
                         let htmlCard = `
                             <div class="video-card">
                                 <div class="video-info">
-                                    <input type="checkbox" class="video-select" data-id="${v.id}" onchange="atualizarCarrinho()">
+                                    ${v.status_pago ? '' : `<input type="checkbox" class="video-select" data-id="${v.id}" onchange="atualizarCarrinho()">`}
                                     <div class="video-details">
                                         <strong>📹 <span class="time-badge">${dataHoraStr}</span></strong>
                                         <span class="status-txt">Mesa ${mesaLimpa} • ${v.status_pago ? '✅ Liberado' : '🔒 Aguardando Pagamento'}</span>
                                     </div>
                                 </div>
-                                ${v.status_pago ? `<a href="${v.url_video}" target="_blank" class="price-tag" style="text-decoration:none;">Baixar</a>` : '<span class="price-tag">R$ 1,00</span>'}
+                                ${v.status_pago ? `<a href="${v.url_video}" target="_blank" class="btn-download">⬇️ Baixar Vídeo</a>` : '<span class="price-tag">R$ 1,00</span>'}
                             </div>
                         `;
                         container.innerHTML += htmlCard;
@@ -207,6 +207,11 @@ def pagina_principal():
                         document.getElementById('qr-code-img').src = 'data:image/png;base64,' + data.qr_code_base64;
                         document.getElementById('pix-copia-cola').innerText = data.pix_copia_cola;
                         document.getElementById('modal-pix').style.display = 'flex';
+
+                        // Inicia consulta automática para atualizar a tela assim que o pagamento for aprovado
+                        if (intervalVerificacao) clearInterval(intervalVerificacao);
+                        intervalVerificacao = setInterval(carregarVideos, 3000);
+
                     } else {
                         alert('Erro ao gerar PIX: ' + (data.detail || 'Tente novamente.'));
                     }
@@ -223,6 +228,7 @@ def pagina_principal():
 
             function fecharModal() {
                 document.getElementById('modal-pix').style.display = 'none';
+                if (intervalVerificacao) clearInterval(intervalVerificacao);
                 carregarVideos();
             }
 
@@ -246,8 +252,8 @@ def pagina_principal():
 @app.get("/api/videos/recentes")
 def listar_videos_recentes():
     try:
-        # Busca ordenado por ID decrescente para trazer o mais novo primeiro
-        resposta = supabase.table("videos").select("*").order("id", desc=True).limit(10).execute()
+        # Busca ordenado por ID decrescente direto do Supabase (o mais novo primeiro)
+        resposta = supabase.table("videos").select("*").order("id", desc=True).limit(15).execute()
         return {"videos": resposta.data}
     except Exception as e:
         return {"videos": [], "erro": str(e)}
@@ -284,11 +290,14 @@ def criar_pedido_pix(payload: CriarPedidoRequest):
         raise HTTPException(status_code=400, detail="Nenhum vídeo selecionado")
 
     valor_total = float(quantidade * 1.00)
+    # Guarda os IDs dos vídeos separados por vírgula no external_reference do Pix
+    ids_str = ",".join(map(str, payload.video_ids))
 
     payment_data = {
         "transaction_amount": valor_total,
         "description": f"Download de {quantidade} vídeo(s) de Replay - Sinuca",
         "payment_method_id": "pix",
+        "external_reference": ids_str,
         "payer": {
             "email": "cliente.replay.sinuca@gmail.com",
             "first_name": "Cliente",
@@ -321,16 +330,33 @@ def criar_pedido_pix(payload: CriarPedidoRequest):
 async def webhook_mercadopago(request: Request):
     try:
         data = await request.json()
-        if data.get("type") == "payment" or data.get("action") == "payment.updated":
+        
+        # Trata o aviso de pagamento do Mercado Pago
+        payment_id = None
+        if data.get("type") == "payment":
             payment_id = data.get("data", {}).get("id")
-            if payment_id:
-                payment_info = sdk.payment().get(payment_id)["response"]
+        elif data.get("action") == "payment.updated":
+            payment_id = data.get("data", {}).get("id")
 
-                if payment_info.get("status") == "approved":
-                    print(f"✅ Pagamento {payment_id} aprovado com sucesso!")
+        if payment_id:
+            payment_info = sdk.payment().get(payment_id)["response"]
+
+            if payment_info.get("status") == "approved":
+                ref_ids = payment_info.get("external_reference")
+                print(f"✅ Pagamento {payment_id} aprovado para os vídeos: {ref_ids}")
+
+                if ref_ids:
+                    # Converte a lista de IDs de string para inteiros
+                    lista_ids = [int(i.strip()) for i in ref_ids.split(",") if i.strip().isdigit()]
+                    
+                    # Atualiza status_pago = True no Supabase para os vídeos pagos
+                    for vid_id in lista_ids:
+                        supabase.table("videos").update({"status_pago": True}).eq("id", vid_id).execute()
+                        print(f"🔓 Vídeo #{vid_id} liberado no Supabase!")
 
         return JSONResponse(content={"status": "ok"}, status_code=200)
     except Exception as e:
+        print(f"❌ Erro Webhook: {e}")
         return JSONResponse(content={"erro": str(e)}, status_code=500)
 
 
