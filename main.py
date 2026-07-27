@@ -1,7 +1,5 @@
 import os
 import uvicorn
-from datetime import datetime
-import zoneinfo
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -25,7 +23,7 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.0.4"
+APP_VERSION = "v1.0.5"
 
 app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
@@ -70,7 +68,7 @@ def pagina_principal():
             .video-info { display: flex; align-items: center; gap: 12px; }
             .video-info input[type="checkbox"] { width: 22px; height: 22px; accent-color: #22c55e; cursor: pointer; }
             .video-details strong { display: block; color: #f1f5f9; font-size: 16px; }
-            .video-details .time-badge { color: #38bdf8; font-weight: bold; font-size: 13px; }
+            .video-details .time-badge { color: #38bdf8; font-weight: bold; font-size: 14px; }
             .video-details .status-txt { display: block; color: #64748b; font-size: 12px; margin-top: 2px; }
             .price-tag { background-color: #0284c7; color: white; padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 14px; }
             
@@ -93,7 +91,7 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.4</span></h1>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.5</span></h1>
                 <p>Mesa 01 - Selecione a jogada pelo horário</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
@@ -123,10 +121,18 @@ def pagina_principal():
         </div>
 
         <script>
-            function formatarHorario(dataIso) {
-                if (!dataIso) return "Horário recente";
-                const d = new Date(dataIso);
-                return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            function formatarHorario(item) {
+                // Tenta pegar de 'created_at', 'criado_em' ou 'data'
+                const rawDate = item.created_at || item.criado_em || item.data;
+                if (!rawDate) return "Recente";
+                
+                try {
+                    const d = new Date(rawDate);
+                    if (isNaN(d.getTime())) return "Recente";
+                    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                } catch(e) {
+                    return "Recente";
+                }
             }
 
             async function carregarVideos() {
@@ -142,7 +148,7 @@ def pagina_principal():
 
                     container.innerHTML = '';
                     data.videos.forEach(v => {
-                        const horaFormatada = formatarHorario(v.created_at);
+                        const horaFormatada = formatarHorario(v);
                         const mesaLimpa = (v.mesa_id || '01').replace('mesa_', '');
 
                         let htmlCard = `
@@ -241,16 +247,15 @@ def listar_videos_recentes():
 @app.post("/api/solicitar-replay")
 def solicitar_replay(payload: ReplayRequest):
     try:
-        agora_sp = datetime.now(zoneinfo.ZoneInfo("America/Sao_Paulo")).isoformat()
         mesa_limpa = payload.mesa_id.replace("mesa_", "")
         nome_arquivo = f"replay_mesa_{mesa_limpa}_exemplo.mp4"
         url_publica = f"{R2_PUBLIC_URL_BASE}/{nome_arquivo}"
 
+        # Insere apenas as colunas padrão garantidas (deixando o Supabase preencher a data)
         resposta = supabase.table("videos").insert({
             "mesa_id": mesa_limpa,
             "url_video": url_publica,
-            "status_pago": False,
-            "created_at": agora_sp
+            "status_pago": False
         }).execute()
 
         return {
