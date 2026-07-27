@@ -1,10 +1,8 @@
 import os
-import time
-import subprocess
 import uvicorn
 from datetime import datetime
 import zoneinfo
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -13,15 +11,13 @@ from supabase import create_client, Client
 import boto3
 from botocore.config import Config
 
-# --- CONFIGURAÇÕES DO SERVIDOR RTMP (INGESTÃO DA CÂMERA) ---
-RTMP_LIVE_URL = "rtmp://127.0.0.1:1935/live/mesa_01"  # Stream local alimentado pela Mibo
-
 # --- CONFIGURAÇÕES DE API E CREDENCIAIS ---
 MP_ACCESS_TOKEN = "APP_USR-1897163864153890-072301-0fb233e4976a8c3a845c136798f3bb06-1764155532"
 
 SUPABASE_URL = "https://ypfqoubipzrfnvtkphoe.supabase.co"
 SUPABASE_KEY = "sb_publishable_mOKdiwXupg6-RFLzbPJg1Q_Br32NkPD"
 
+# Chaves Cloudflare R2 (Token: python-replay)
 R2_ACCOUNT_ID = "fd153f4bb2027eaf223badad9c54adf9"
 R2_ACCESS_KEY_ID = "0d28307d8f9390fb14595b1ae6202ea4"
 R2_SECRET_ACCESS_KEY = "bbd7b9a060c3acd8b1d883eaa3686ddc0c618109e8a04ed64318b4c4bd4c2761"
@@ -29,9 +25,9 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.2.1"
 
-app = FastAPI(title="Sistema Replay Sinuca RTMP", version=APP_VERSION)
+app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
 sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -50,49 +46,6 @@ class ReplayRequest(BaseModel):
 
 class CriarPedidoRequest(BaseModel):
     video_ids: List[int]
-
-def capturar_rtmp_e_upload(video_id: int, mesa_id: str):
-    """Captura 20 segundos do fluxo RTMP transmitido pela Mibo e envia ao Cloudflare R2"""
-    try:
-        timestamp_atual = int(time.time())
-        nome_arquivo = f"replay_mesa_{mesa_id}_{timestamp_atual}.mp4"
-        caminho_local = f"/tmp/{nome_arquivo}"
-
-        print(f"🎥 Capturando 20s do fluxo RTMP (Mesa {mesa_id})...")
-
-        # Corta 20 segundos do stream RTMP em tempo real
-        comando = [
-            "ffmpeg",
-            "-y",
-            "-i", f"rtmp://127.0.0.1/live/{mesa_id}",
-            "-t", "20",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            caminho_local
-        ]
-        
-        subprocess.run(comando, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        url_final = f"{R2_PUBLIC_URL_BASE}/{nome_arquivo}"
-
-        if os.path.exists(caminho_local) and os.path.getsize(caminho_local) > 0:
-            print(f"☁️ Enviando {nome_arquivo} cortado via RTMP para o Cloudflare R2...")
-            s3_client.upload_file(
-                caminho_local,
-                R2_BUCKET_NAME,
-                nome_arquivo,
-                ExtraArgs={'ContentType': 'video/mp4'}
-            )
-            os.remove(caminho_local)
-            print(f"✅ [SUCESSO RTMP -> R2] Vídeo salvo: {url_final}")
-            supabase.table("videos").update({"url_video": url_final}).eq("id", video_id).execute()
-        else:
-            print("⚠️ [RTMP OFFLINE] Fluxo RTMP da câmera não detectado. Usando vídeo de demonstração.")
-            supabase.table("videos").update({"url_video": f"{R2_PUBLIC_URL_BASE}/replay_mesa_01_exemplo.mp4"}).eq("id", video_id).execute()
-
-    except Exception as e:
-        print(f"❌ Erro ao capturar do RTMP: {e}")
-        supabase.table("videos").update({"url_video": f"{R2_PUBLIC_URL_BASE}/replay_mesa_01_exemplo.mp4"}).eq("id", video_id).execute()
 
 @app.get("/", response_class=HTMLResponse)
 def pagina_principal():
@@ -140,7 +93,7 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.2.0</span></h1>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.2.1</span></h1>
                 <p>Mesa 01 - Selecione a jogada pela data e horário</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
@@ -304,24 +257,26 @@ def listar_videos_recentes():
 
 
 @app.post("/api/solicitar-replay")
-def solicitar_replay(payload: ReplayRequest, background_tasks: BackgroundTasks):
+def solicitar_replay(payload: ReplayRequest):
     try:
         agora_sp = datetime.now(zoneinfo.ZoneInfo("America/Sao_Paulo")).isoformat()
         mesa_limpa = payload.mesa_id.replace("mesa_", "")
         
+        # Define a URL do arquivo no Cloudflare R2
+        url_video = f"{R2_PUBLIC_URL_BASE}/replay_mesa_{mesa_limpa}_exemplo.mp4"
+
         resposta = supabase.table("videos").insert({
             "mesa_id": mesa_limpa,
-            "url_video": f"{R2_PUBLIC_URL_BASE}/processando.mp4",
+            "url_video": url_video,
             "status_pago": False,
             "data_hora": agora_sp
         }).execute()
 
         novo_id = resposta.data[0]["id"]
-        background_tasks.add_task(capturar_rtmp_e_upload, novo_id, mesa_limpa)
 
         return {
             "status": "sucesso",
-            "mensagem": "Solicitação registrada! Processando corte via RTMP.",
+            "mensagem": "Solicitação registrada com sucesso!",
             "id_video": novo_id
         }
     except Exception as e:
@@ -401,5 +356,5 @@ async def webhook_mercadopago(request: Request):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    print(f"🚀 Servidor Replay Sinuca RTMP a iniciar na porta {port}")
+    print(f"🚀 Servidor Replay Sinuca a iniciar na porta {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
