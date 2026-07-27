@@ -10,19 +10,20 @@ import boto3
 from botocore.config import Config
 
 # --- CONFIGURAÇÕES DE API E CREDENCIAIS ---
-# Access Token de Produção oficial ativado no Mercado Pago:
 MP_ACCESS_TOKEN = "APP_USR-1897163864153890-072301-0fb233e4976a8c3a845c136798f3bb06-1764155532"
 
 SUPABASE_URL = "https://ypfqoubipzrfnvtkphoe.supabase.co"
 SUPABASE_KEY = "sb_publishable_mOKdiwXupg6-RFLzbPJg1Q_Br32NkPD"
 
+# Chaves atualizadas do Cloudflare R2 (Token: python-replay)
 R2_ACCOUNT_ID = "fd153f4bb2027eaf223badad9c54adf9"
-R2_ACCESS_KEY_ID = "0b51bc8855126f4498d4ba6d54434544"
-R2_SECRET_ACCESS_KEY = "63f0f08d4f1f7b42ce9f1237d68b8d62b40ab69ab9fc5fc1837f553d367e8e06"
+R2_ACCESS_KEY_ID = "0d28307d8f9390fb14595b1ae6202ea4"
+R2_SECRET_ACCESS_KEY = "bbd7b9a060c3acd8b1d883eaa3686ddc0c618109e8a04ed64318b4c4bd4c2761"
 R2_BUCKET_NAME = "replay-sinuca-videos"
+R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.0.1"
+APP_VERSION = "v1.0.3"
 
 app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
@@ -40,9 +41,10 @@ s3_client = boto3.client(
 class ReplayRequest(BaseModel):
     mesa_id: str
     evento: Optional[str] = "replay_request"
+    url_video: Optional[str] = None
 
 class CriarPedidoRequest(BaseModel):
-    video_ids: List[str]
+    video_ids: List[int]
 
 @app.get("/", response_class=HTMLResponse)
 def pagina_principal():
@@ -55,7 +57,7 @@ def pagina_principal():
         <title>Replay Sinuca - Mesa 01</title>
         <style>
             * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-            body { background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; padding-bottom: 100px; }
+            body { background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; padding-bottom: 120px; }
             .container { max-width: 600px; margin: 0 auto; }
             .header { text-align: center; padding: 20px 0; border-bottom: 1px solid #334155; }
             .header h1 { margin: 0; color: #38bdf8; font-size: 24px; display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -84,37 +86,17 @@ def pagina_principal():
             .btn-close { background: #64748b; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-top: 10px; }
         </style>
     </head>
-    <body>
+    <body onload="carregarVideos()">
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.1</span></h1>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.3</span></h1>
                 <p>Mesa 01 - Selecione as suas jogadas e efetue o download</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
 
             <div id="lista-videos">
-                <div class="video-card">
-                    <div class="video-info">
-                        <input type="checkbox" class="video-select" data-id="vid-demo-01" onchange="atualizarCarrinho()">
-                        <div class="video-details">
-                            <strong>📹 Tacada Especial - 21:15</strong>
-                            <span>Duração: 20s • Alta Definição</span>
-                        </div>
-                    </div>
-                    <span class="price-tag">R$ 1,00</span>
-                </div>
-
-                <div class="video-card">
-                    <div class="video-info">
-                        <input type="checkbox" class="video-select" data-id="vid-demo-02" onchange="atualizarCarrinho()">
-                        <div class="video-details">
-                            <strong>📹 Efeito Triplo - 21:32</strong>
-                            <span>Duração: 20s • Alta Definição</span>
-                        </div>
-                    </div>
-                    <span class="price-tag">R$ 1,00</span>
-                </div>
+                <p style="text-align:center; color:#94a3b8; margin-top:30px;">Carregando jogadas recentes...</p>
             </div>
         </div>
 
@@ -123,13 +105,13 @@ def pagina_principal():
                 Total: <strong id="total-txt">R$ 0,00</strong><br>
                 <small><span id="qtd-txt">0</span> vídeo(s) selecionado(s)</small>
             </div>
-            <button class="btn-pix" onclick="gerarPix()">Pagar via PIX</button>
+            <button class="btn-pix" onclick="gerarPix()">Pagar via PIX (R$ 1,00)</button>
         </div>
 
         <div id="modal-pix" class="modal">
             <div class="modal-content">
                 <h3 style="margin-top:0; color:#22c55e;">Pagamento PIX Gerado!</h3>
-                <p style="font-size:14px; color:#cbd5e1;">Pague através da sua aplicação bancária para libertar o acesso instantâneo:</p>
+                <p style="font-size:14px; color:#cbd5e1;">Pague com o aplicativo do seu banco para liberar o download instantâneo:</p>
                 <img id="qr-code-img" src="" alt="QR Code PIX">
                 <div class="pix-code" id="pix-copia-cola"></div>
                 <button class="btn-pix" style="width:100%; margin-top:10px;" onclick="copiarPix()">Copiar Código PIX</button>
@@ -138,6 +120,38 @@ def pagina_principal():
         </div>
 
         <script>
+            async function carregarVideos() {
+                try {
+                    const res = await fetch('/api/videos/recentes');
+                    const data = await res.json();
+                    const container = document.getElementById('lista-videos');
+                    
+                    if (!data.videos || data.videos.length === 0) {
+                        container.innerHTML = '<p style="text-align:center; color:#94a3b8; margin-top:30px;">Nenhum replay recente gravado ainda. Aperte o botão da mesa!</p>';
+                        return;
+                    }
+
+                    container.innerHTML = '';
+                    data.videos.forEach(v => {
+                        let htmlCard = `
+                            <div class="video-card">
+                                <div class="video-info">
+                                    <input type="checkbox" class="video-select" data-id="${v.id}" onchange="atualizarCarrinho()">
+                                    <div class="video-details">
+                                        <strong>📹 Tacada - Mesa ${v.mesa_id}</strong>
+                                        <span>Status: ${v.status_pago ? '✅ Liberado' : '🔒 Aguardando Pagamento'}</span>
+                                    </div>
+                                </div>
+                                ${v.status_pago ? `<a href="${v.url_video}" target="_blank" class="price-tag" style="text-decoration:none;">Baixar</a>` : '<span class="price-tag">R$ 1,00</span>'}
+                            </div>
+                        `;
+                        container.innerHTML += htmlCard;
+                    });
+                } catch(e) {
+                    console.error("Erro ao carregar vídeos:", e);
+                }
+            }
+
             function atualizarCarrinho() {
                 const selecionados = document.querySelectorAll('.video-select:checked');
                 const qtd = selecionados.length;
@@ -147,7 +161,7 @@ def pagina_principal():
 
             async function gerarPix() {
                 const selecionados = document.querySelectorAll('.video-select:checked');
-                const ids = Array.from(selecionados).map(cb => cb.getAttribute('data-id'));
+                const ids = Array.from(selecionados).map(cb => parseInt(cb.getAttribute('data-id')));
 
                 if (ids.length === 0) {
                     alert('Por favor, selecione pelo menos 1 vídeo para continuar!');
@@ -183,16 +197,18 @@ def pagina_principal():
 
             function fecharModal() {
                 document.getElementById('modal-pix').style.display = 'none';
+                carregarVideos();
             }
 
             async function simularCliqueBotao() {
                 const res = await fetch('/api/solicitar-replay', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mesa_id: 'mesa_01', evento: 'replay_request' })
+                    body: JSON.stringify({ mesa_id: '01', evento: 'replay_request' })
                 });
                 const data = await res.json();
-                alert('Sinal do botão processado com sucesso! ' + JSON.stringify(data));
+                alert('Sinal do botão processado! Replay adicionado.');
+                carregarVideos();
             }
         </script>
     </body>
@@ -201,12 +217,24 @@ def pagina_principal():
     return HTMLResponse(content=html_content)
 
 
+@app.get("/api/videos/recentes")
+def listar_videos_recentes():
+    try:
+        resposta = supabase.table("videos").select("*").order("id", desc=True).limit(10).execute()
+        return {"videos": resposta.data}
+    except Exception as e:
+        return {"videos": [], "erro": str(e)}
+
+
 @app.post("/api/solicitar-replay")
 def solicitar_replay(payload: ReplayRequest):
     try:
+        nome_arquivo = f"replay_mesa_{payload.mesa_id}_exemplo.mp4"
+        url_publica = f"{R2_PUBLIC_URL_BASE}/{nome_arquivo}"
+
         resposta = supabase.table("videos").insert({
             "mesa_id": payload.mesa_id,
-            "url_video": f"https://{R2_BUCKET_NAME}.r2.cloudflarestorage.com/exemplo_video.mp4",
+            "url_video": url_publica,
             "status_pago": False
         }).execute()
 
@@ -216,7 +244,7 @@ def solicitar_replay(payload: ReplayRequest):
             "dados": resposta.data
         }
     except Exception as e:
-        return {"status": "erro", "detalhes": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/pedidos/criar-pix")
@@ -263,12 +291,13 @@ def criar_pedido_pix(payload: CriarPedidoRequest):
 async def webhook_mercadopago(request: Request):
     try:
         data = await request.json()
-        if data.get("action") == "payment.updated":
-            payment_id = data["data"]["id"]
-            payment_info = sdk.payment().get(payment_id)["response"]
+        if data.get("type") == "payment" or data.get("action") == "payment.updated":
+            payment_id = data.get("data", {}).get("id")
+            if payment_id:
+                payment_info = sdk.payment().get(payment_id)["response"]
 
-            if payment_info.get("status") == "approved":
-                print(f"✅ Pagamento {payment_id} aprovado com sucesso!")
+                if payment_info.get("status") == "approved":
+                    print(f"✅ Pagamento {payment_id} aprovado com sucesso!")
 
         return JSONResponse(content={"status": "ok"}, status_code=200)
     except Exception as e:
@@ -276,5 +305,6 @@ async def webhook_mercadopago(request: Request):
 
 
 if __name__ == "__main__":
-    print("🚀 Servidor Replay Sinuca a iniciar em http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    print(f"🚀 Servidor Replay Sinuca a iniciar na porta {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
