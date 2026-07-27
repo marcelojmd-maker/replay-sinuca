@@ -25,7 +25,7 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.0.6"
+APP_VERSION = "v1.0.7"
 
 app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
@@ -69,9 +69,9 @@ def pagina_principal():
             .video-card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 15px; margin: 15px 0; display: flex; align-items: center; justify-content: space-between; }
             .video-info { display: flex; align-items: center; gap: 12px; }
             .video-info input[type="checkbox"] { width: 22px; height: 22px; accent-color: #22c55e; cursor: pointer; }
-            .video-details strong { display: block; color: #f1f5f9; font-size: 16px; }
-            .video-details .time-badge { color: #38bdf8; font-weight: bold; font-size: 14px; }
-            .video-details .status-txt { display: block; color: #64748b; font-size: 12px; margin-top: 2px; }
+            .video-details strong { display: block; color: #f1f5f9; font-size: 15px; }
+            .video-details .time-badge { color: #38bdf8; font-weight: bold; font-size: 13px; }
+            .video-details .status-txt { display: block; color: #64748b; font-size: 12px; margin-top: 3px; }
             .price-tag { background-color: #0284c7; color: white; padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 14px; }
             
             .checkout-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: #0f172a; border-top: 1px solid #334155; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; max-width: 600px; margin: 0 auto; }
@@ -93,8 +93,8 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.6</span></h1>
-                <p>Mesa 01 - Selecione a jogada pelo horário</p>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.7</span></h1>
+                <p>Mesa 01 - Selecione a jogada pela data e horário</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
 
@@ -123,15 +123,18 @@ def pagina_principal():
         </div>
 
         <script>
-            function formatarHorario(item) {
-                // Prioriza a coluna 'data_hora' da sua tabela no Supabase
+            function formatarDataHora(item) {
                 const rawDate = item.data_hora || item.created_at || item.criado_em;
                 if (!rawDate) return "Recente";
                 
                 try {
                     const d = new Date(rawDate);
                     if (isNaN(d.getTime())) return "Recente";
-                    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    
+                    const dataStr = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                    const horaStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    
+                    return `${dataStr} às ${horaStr}`;
                 } catch(e) {
                     return "Recente";
                 }
@@ -148,9 +151,12 @@ def pagina_principal():
                         return;
                     }
 
+                    // Garante que o vídeo mais recente (maior ID) fique em primeiro lugar
+                    data.videos.sort((a, b) => (b.id || 0) - (a.id || 0));
+
                     container.innerHTML = '';
                     data.videos.forEach(v => {
-                        const horaFormatada = formatarHorario(v);
+                        const dataHoraStr = formatarDataHora(v);
                         const mesaLimpa = (v.mesa_id || '01').replace('mesa_', '');
 
                         let htmlCard = `
@@ -158,7 +164,7 @@ def pagina_principal():
                                 <div class="video-info">
                                     <input type="checkbox" class="video-select" data-id="${v.id}" onchange="atualizarCarrinho()">
                                     <div class="video-details">
-                                        <strong>📹 Jogada às <span class="time-badge">${horaFormatada}</span></strong>
+                                        <strong>📹 <span class="time-badge">${dataHoraStr}</span></strong>
                                         <span class="status-txt">Mesa ${mesaLimpa} • ${v.status_pago ? '✅ Liberado' : '🔒 Aguardando Pagamento'}</span>
                                     </div>
                                 </div>
@@ -240,6 +246,7 @@ def pagina_principal():
 @app.get("/api/videos/recentes")
 def listar_videos_recentes():
     try:
+        # Busca ordenado por ID decrescente para trazer o mais novo primeiro
         resposta = supabase.table("videos").select("*").order("id", desc=True).limit(10).execute()
         return {"videos": resposta.data}
     except Exception as e:
@@ -254,7 +261,6 @@ def solicitar_replay(payload: ReplayRequest):
         nome_arquivo = f"replay_mesa_{mesa_limpa}_exemplo.mp4"
         url_publica = f"{R2_PUBLIC_URL_BASE}/{nome_arquivo}"
 
-        # Grava a data no campo correto: data_hora
         resposta = supabase.table("videos").insert({
             "mesa_id": mesa_limpa,
             "url_video": url_publica,
