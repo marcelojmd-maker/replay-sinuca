@@ -1,5 +1,7 @@
 import os
 import uvicorn
+from datetime import datetime
+import zoneinfo
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -15,7 +17,7 @@ MP_ACCESS_TOKEN = "APP_USR-1897163864153890-072301-0fb233e4976a8c3a845c136798f3b
 SUPABASE_URL = "https://ypfqoubipzrfnvtkphoe.supabase.co"
 SUPABASE_KEY = "sb_publishable_mOKdiwXupg6-RFLzbPJg1Q_Br32NkPD"
 
-# Chaves atualizadas do Cloudflare R2 (Token: python-replay)
+# Chaves Cloudflare R2 (Token: python-replay)
 R2_ACCOUNT_ID = "fd153f4bb2027eaf223badad9c54adf9"
 R2_ACCESS_KEY_ID = "0d28307d8f9390fb14595b1ae6202ea4"
 R2_SECRET_ACCESS_KEY = "bbd7b9a060c3acd8b1d883eaa3686ddc0c618109e8a04ed64318b4c4bd4c2761"
@@ -23,7 +25,7 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.0.3"
+APP_VERSION = "v1.0.4"
 
 app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
@@ -50,7 +52,7 @@ class CriarPedidoRequest(BaseModel):
 def pagina_principal():
     html_content = """
     <!DOCTYPE html>
-    <html lang="pt">
+    <html lang="pt-BR">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -66,10 +68,11 @@ def pagina_principal():
             
             .video-card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 15px; margin: 15px 0; display: flex; align-items: center; justify-content: space-between; }
             .video-info { display: flex; align-items: center; gap: 12px; }
-            .video-info input[type="checkbox"] { width: 20px; height: 20px; accent-color: #22c55e; cursor: pointer; }
+            .video-info input[type="checkbox"] { width: 22px; height: 22px; accent-color: #22c55e; cursor: pointer; }
             .video-details strong { display: block; color: #f1f5f9; font-size: 16px; }
-            .video-details span { color: #64748b; font-size: 12px; }
-            .price-tag { background-color: #0284c7; color: white; padding: 4px 10px; border-radius: 20px; font-weight: bold; font-size: 14px; }
+            .video-details .time-badge { color: #38bdf8; font-weight: bold; font-size: 13px; }
+            .video-details .status-txt { display: block; color: #64748b; font-size: 12px; margin-top: 2px; }
+            .price-tag { background-color: #0284c7; color: white; padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 14px; }
             
             .checkout-bar { position: fixed; bottom: 0; left: 0; right: 0; background-color: #0f172a; border-top: 1px solid #334155; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; max-width: 600px; margin: 0 auto; }
             .checkout-info { font-size: 14px; color: #cbd5e1; }
@@ -90,8 +93,8 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.3</span></h1>
-                <p>Mesa 01 - Selecione as suas jogadas e efetue o download</p>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.4</span></h1>
+                <p>Mesa 01 - Selecione a jogada pelo horário</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
 
@@ -120,6 +123,12 @@ def pagina_principal():
         </div>
 
         <script>
+            function formatarHorario(dataIso) {
+                if (!dataIso) return "Horário recente";
+                const d = new Date(dataIso);
+                return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            }
+
             async function carregarVideos() {
                 try {
                     const res = await fetch('/api/videos/recentes');
@@ -133,13 +142,16 @@ def pagina_principal():
 
                     container.innerHTML = '';
                     data.videos.forEach(v => {
+                        const horaFormatada = formatarHorario(v.created_at);
+                        const mesaLimpa = (v.mesa_id || '01').replace('mesa_', '');
+
                         let htmlCard = `
                             <div class="video-card">
                                 <div class="video-info">
                                     <input type="checkbox" class="video-select" data-id="${v.id}" onchange="atualizarCarrinho()">
                                     <div class="video-details">
-                                        <strong>📹 Tacada - Mesa ${v.mesa_id}</strong>
-                                        <span>Status: ${v.status_pago ? '✅ Liberado' : '🔒 Aguardando Pagamento'}</span>
+                                        <strong>📹 Jogada às <span class="time-badge">${horaFormatada}</span></strong>
+                                        <span class="status-txt">Mesa ${mesaLimpa} • ${v.status_pago ? '✅ Liberado' : '🔒 Aguardando Pagamento'}</span>
                                     </div>
                                 </div>
                                 ${v.status_pago ? `<a href="${v.url_video}" target="_blank" class="price-tag" style="text-decoration:none;">Baixar</a>` : '<span class="price-tag">R$ 1,00</span>'}
@@ -229,18 +241,21 @@ def listar_videos_recentes():
 @app.post("/api/solicitar-replay")
 def solicitar_replay(payload: ReplayRequest):
     try:
-        nome_arquivo = f"replay_mesa_{payload.mesa_id}_exemplo.mp4"
+        agora_sp = datetime.now(zoneinfo.ZoneInfo("America/Sao_Paulo")).isoformat()
+        mesa_limpa = payload.mesa_id.replace("mesa_", "")
+        nome_arquivo = f"replay_mesa_{mesa_limpa}_exemplo.mp4"
         url_publica = f"{R2_PUBLIC_URL_BASE}/{nome_arquivo}"
 
         resposta = supabase.table("videos").insert({
-            "mesa_id": payload.mesa_id,
+            "mesa_id": mesa_limpa,
             "url_video": url_publica,
-            "status_pago": False
+            "status_pago": False,
+            "created_at": agora_sp
         }).execute()
 
         return {
             "status": "sucesso",
-            "mensagem": "Solicitação de Replay registada com sucesso!",
+            "mensagem": "Solicitação de Replay registrada com sucesso!",
             "dados": resposta.data
         }
     except Exception as e:
