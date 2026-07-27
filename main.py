@@ -1,5 +1,7 @@
 import os
 import uvicorn
+from datetime import datetime
+import zoneinfo
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -23,7 +25,7 @@ R2_BUCKET_NAME = "replay-sinuca-videos"
 R2_PUBLIC_URL_BASE = "https://pub-34bf950fa2a14cd2ac1117f8db326779.r2.dev"
 
 # --- INICIALIZAÇÃO DA APLICAÇÃO E SERVIÇOS ---
-APP_VERSION = "v1.0.5"
+APP_VERSION = "v1.0.6"
 
 app = FastAPI(title="Sistema Replay Sinuca", version=APP_VERSION)
 
@@ -91,7 +93,7 @@ def pagina_principal():
 
         <div class="container">
             <div class="header">
-                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.5</span></h1>
+                <h1>🎱 Replay Sinuca <span class="badge-version">v1.0.6</span></h1>
                 <p>Mesa 01 - Selecione a jogada pelo horário</p>
                 <button class="btn-simular" onclick="simularCliqueBotao()">🎮 Simular Pressionar de Botão (ESP32)</button>
             </div>
@@ -122,8 +124,8 @@ def pagina_principal():
 
         <script>
             function formatarHorario(item) {
-                // Tenta pegar de 'created_at', 'criado_em' ou 'data'
-                const rawDate = item.created_at || item.criado_em || item.data;
+                // Prioriza a coluna 'data_hora' da sua tabela no Supabase
+                const rawDate = item.data_hora || item.created_at || item.criado_em;
                 if (!rawDate) return "Recente";
                 
                 try {
@@ -247,15 +249,17 @@ def listar_videos_recentes():
 @app.post("/api/solicitar-replay")
 def solicitar_replay(payload: ReplayRequest):
     try:
+        agora_sp = datetime.now(zoneinfo.ZoneInfo("America/Sao_Paulo")).isoformat()
         mesa_limpa = payload.mesa_id.replace("mesa_", "")
         nome_arquivo = f"replay_mesa_{mesa_limpa}_exemplo.mp4"
         url_publica = f"{R2_PUBLIC_URL_BASE}/{nome_arquivo}"
 
-        # Insere apenas as colunas padrão garantidas (deixando o Supabase preencher a data)
+        # Grava a data no campo correto: data_hora
         resposta = supabase.table("videos").insert({
             "mesa_id": mesa_limpa,
             "url_video": url_publica,
-            "status_pago": False
+            "status_pago": False,
+            "data_hora": agora_sp
         }).execute()
 
         return {
